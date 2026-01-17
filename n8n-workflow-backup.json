@@ -1,0 +1,339 @@
+{
+  "name": "Fuorirotta - Multi-Source Scraper",
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://www.solosagre.it/sagre/lombardia/",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [224, -16],
+      "id": "f774b86e-c90b-49eb-b338-2d75d1acf0d9",
+      "name": "HTTP Request - SoloSagre"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://www.dati.lombardia.it/resource/hs8z-dcey.json?$limit=2000&$offset=0&$where=data_in>=\\'' + $('Parse Query Parameters').first().json.dateFrom.split('T')[0] + '\\'%20AND%20data_in<=\\'' + $('Parse Query Parameters').first().json.dateTo.split('T')[0] + '\\'&$order=data_in%20DESC' }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [224, 176],
+      "id": "d37b9bcc-1d72-4c3b-a0de-93cc5af4a199",
+      "name": "HTTP Request - OpenData Lombardia"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse HTML di SoloSagre per estrarre eventi\nconst html = $input.first().json.data;\n\n// Regex per estrarre i dati (metodo semplice senza librerie)\nconst events = [];\n\n// Trova tutti i div.post\nconst postMatches = html.match(/<div class=\"post\"[^>]*>[\\s\\S]*?<\\/div>\\s*<\\/div>\\s*<\\/div>/g);\n\nif (postMatches) {\n  postMatches.forEach(post => {\n    // Estrai title\n    const titleMatch = post.match(/<span itemprop=\"name\">(.*?)<\\/span>/);\n    const title = titleMatch ? titleMatch[1] : null;\n    \n    // Estrai URL\n    const urlMatch = post.match(/<a href=\"(https:\\/\\/www\\.solosagre\\.it\\/[^\"]+)\"/);\n    const url = urlMatch ? urlMatch[1] : null;\n    \n    // Estrai date\n    const startMatch = post.match(/<time itemprop=\"startDate\" datetime=\"([^\"]+)\">/);\n    const endMatch = post.match(/<time itemprop=\"endDate\" datetime=\"([^\"]+)\">/);\n    const date_start = startMatch ? startMatch[1] : null;\n    const date_end = endMatch ? endMatch[1] : null;\n    \n    // Estrai location\n    const locationMatch = post.match(/<span itemprop=\"location\">(.*?)<\\/span>/);\n    const location = locationMatch ? locationMatch[1] : null;\n    \n    // Estrai description\n    const descMatch = post.match(/<span itemprop=\"description\">([\\s\\S]*?)<\\/span>/);\n    const description = descMatch ? descMatch[1].replace(/<[^>]+>/g, '').substring(0, 500) : null;\n    \n    // Estrai image\n    const imgMatch = post.match(/<img[^>]+src=\"([^\"]+)\"/);\n    const image = imgMatch ? imgMatch[1] : null;\n    \n    if (title && date_start) {\n      events.push({\n        title,\n        url,\n        date_start,\n        date_end,\n        location,\n        description,\n        image\n      });\n    }\n  });\n}\n\nreturn events.map(event => ({ json: event }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [432, -16],
+      "id": "3409e536-7621-4e9c-b8fe-aa344b979694",
+      "name": "Code - Parse SoloSagre HTML"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst params = $('Parse Query Parameters').first().json;\n\n// Normalizza le date di ricerca: dateFrom all'inizio del giorno, dateTo alla fine del giorno\nconst dateFrom = new Date(params.dateFrom);\ndateFrom.setHours(0, 0, 0, 0);\n\nconst dateTo = new Date(params.dateTo);\ndateTo.setHours(23, 59, 59, 999);\n\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  // Parse dates - normalizza a mezzanotte e fine giornata\n  let eventStartDate = data.date_start ? new Date(data.date_start) : null;\n  let eventEndDate = data.date_end ? new Date(data.date_end) : null;\n  \n  if (!eventStartDate) continue;\n  \n  // Normalizza eventStartDate all'inizio della giornata\n  eventStartDate.setHours(0, 0, 0, 0);\n  \n  // Se non c'è data fine, usa la data inizio alla fine della giornata\n  if (!eventEndDate) {\n    eventEndDate = new Date(eventStartDate);\n  }\n  eventEndDate.setHours(23, 59, 59, 999);\n  \n  // Check if event is active during the requested period\n  const isActiveInPeriod = eventStartDate <= dateTo && eventEndDate >= dateFrom;\n  if (!isActiveInPeriod) continue;\n  \n  // Extract city from location (best effort)\n  const locationCity = data.location ? data.location.split(/[,\\\\(]/)[0].trim() : null;\n  \n  // NON filtriamo per città - SoloSagre già filtra per regione (Lombardia)\n  \n  results.push({\n    json: {\n      source: 'solosagre',\n      source_id: data.url ? data.url.split('/').pop().replace('.html', '') : String(Math.random()),\n      title: data.title || 'Evento',\n      description: data.description || '',\n      date_start: eventStartDate.toISOString(),\n      date_end: eventEndDate.toISOString(),\n      location_name: locationCity || 'Lombardia',\n      address: null,\n      latitude: null,\n      longitude: null,\n      category: 'Sagra',\n      source_url: data.url || 'https://www.solosagre.it',\n      image_url: data.image ? 'https://www.solosagre.it' + data.image : null\n    }\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, -16],
+      "id": "7c4650b6-09bb-4943-9532-e1ac4a22e270",
+      "name": "Code - Transform SoloSagre"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "a1827d1c-d5c3-454c-ba89-7ce25d784e57",
+              "leftValue": "={{ $json.date_start }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [848, -16],
+      "id": "902fb5b6-4551-4093-a699-815542cf1f65",
+      "name": "IF - SoloSagre Valid Date"
+    },
+    {
+      "parameters": {
+        "numberInputs": 3
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [1136, 80],
+      "id": "c4c3a3e2-eb9c-4f35-a4fb-fd0faeef2791",
+      "name": "Merge - All Sources"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "events",
+          "mode": "list",
+          "cachedResultName": "events"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": ["id"],
+          "schema": [
+            {"id": "id", "displayName": "id", "required": false, "type": "number", "canBeUsedToMatch": true},
+            {"id": "source", "displayName": "source", "required": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "source_id", "displayName": "source_id", "required": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "title", "displayName": "title", "required": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "description", "displayName": "description", "required": false, "type": "string", "canBeUsedToMatch": true},
+            {"id": "date_start", "displayName": "date_start", "required": true, "type": "dateTime", "canBeUsedToMatch": true},
+            {"id": "date_end", "displayName": "date_end", "required": false, "type": "dateTime", "canBeUsedToMatch": true},
+            {"id": "location_name", "displayName": "location_name", "required": false, "type": "string", "canBeUsedToMatch": true},
+            {"id": "address", "displayName": "address", "required": false, "type": "string", "canBeUsedToMatch": true},
+            {"id": "latitude", "displayName": "latitude", "required": false, "type": "number", "canBeUsedToMatch": true},
+            {"id": "longitude", "displayName": "longitude", "required": false, "type": "number", "canBeUsedToMatch": true},
+            {"id": "category", "displayName": "category", "required": false, "type": "string", "canBeUsedToMatch": true},
+            {"id": "source_url", "displayName": "source_url", "required": false, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_url", "displayName": "image_url", "required": false, "type": "string", "canBeUsedToMatch": true},
+            {"id": "created_at", "displayName": "created_at", "required": false, "type": "dateTime", "canBeUsedToMatch": true},
+            {"id": "updated_at", "displayName": "updated_at", "required": false, "type": "dateTime", "canBeUsedToMatch": true}
+          ]
+        },
+        "options": {
+          "skipOnConflict": true
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1296, 96],
+      "id": "0419078e-2bc3-41f5-a41d-cee9e597b798",
+      "name": "Insert in DB"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst params = $('Parse Query Parameters').first().json;\n\nconst results = [];\n\nfor (const item of items) {\n  const data = item.json;\n  \n  if (!data.data_in) continue;\n  \n  const eventStartDate = new Date(data.data_in);\n  eventStartDate.setHours(0, 0, 0, 0);\n  \n  let eventEndDate = data.data_fine ? new Date(data.data_fine) : new Date(eventStartDate);\n  eventEndDate.setHours(23, 59, 59, 999);\n  \n  results.push({\n    json: {\n      source: \"opendata_lombardia\",\n      source_id: data.id || String(Math.random()),\n      title: data.denom || 'Evento',\n      description: data.descriz || '',\n      date_start: eventStartDate.toISOString(),\n      date_end: eventEndDate.toISOString(),\n      location_name: data.comune || 'Lombardia',\n      address: ((data.toponimo || '') + ' ' + (data.indirizzo || '') + ' ' + (data.civico || '')).trim(),\n      latitude: data.geo_y ? parseFloat(data.geo_y) : null,\n      longitude: data.geo_x ? parseFloat(data.geo_x) : null,\n      category: data.tipo || 'Sagra',\n      source_url: data.url_programma?.url || 'https://www.dati.lombardia.it',\n      image_url: null\n    }\n  });\n}\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 176],
+      "id": "f43581de-e438-4cc6-b3ef-0434410938dd",
+      "name": "Code - Transform OpenData"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e7021d29-83a0-4db1-ab5b-f10357ef18ab",
+              "leftValue": "={{ $json.date_start }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [848, 176],
+      "id": "883f8875-248a-4e21-a441-1b73e61c34a1",
+      "name": "IF - OpenData Valid Date"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "fuorirotta-scrape",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-001",
+      "name": "Webhook Trigger - Scrape Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-336, 64],
+      "webhookId": "75bafff7-ed81-471e-854c-6941a68f5c02"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Questo nodo gestisce DUE tipi di input:\n// 1. Webhook trigger (ricerca utente con parametri specifici)\n// 2. Schedule trigger (refresh globale ogni 4 ore)\n\nconst input = $input.first().json;\n\n// Lista completa città lombarde\nconst lombardyCities = [\n  'Milano', 'Bergamo', 'Brescia', 'Como', 'Cremona',\n  'Lecco', 'Lodi', 'Mantova', 'Monza', 'Pavia',\n  'Sondrio', 'Varese', 'Erba'\n];\n\nconst today = new Date().toISOString().split('T')[0];\nconst sixMonthsLater = new Date();\nsixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);\nconst endDate = sixMonthsLater.toISOString().split('T')[0];\n\n// CASO 1: Da Schedule Trigger (refresh globale)\nif (input.timestamp || !input.body) {\n  return [{\n    json: {\n      cities: lombardyCities,\n      radiusKm: null,\n      dateFrom: today,\n      dateTo: endDate,\n      queryHash: 'scheduled_refresh',\n      executionId: 'scheduled_' + Date.now(),\n      centerLat: 45.4654,\n      centerLng: 9.1859,\n      isScheduled: true\n    }\n  }];\n}\n\n// CASO 2: Da Webhook (ricerca utente)\nconst query = input.body?.query || {};\nconst validCities = (query.cities || []).filter(c => lombardyCities.includes(c));\n\nlet dateFrom = query.dateFrom || today;\nlet dateTo = query.dateTo || endDate;\n\nif (typeof dateFrom === 'string' && dateFrom.includes('T')) {\n  dateFrom = dateFrom.split('T')[0];\n}\nif (typeof dateTo === 'string' && dateTo.includes('T')) {\n  dateTo = dateTo.split('T')[0];\n}\n\nreturn [{\n  json: {\n    cities: validCities.length > 0 ? validCities : lombardyCities,\n    radiusKm: query.radiusKm || null,\n    dateFrom: dateFrom,\n    dateTo: dateTo,\n    queryHash: query.query_hash || 'default',\n    executionId: input.body?.execution_id || 'webhook_' + Date.now(),\n    centerLat: query.centerLat || 45.4654,\n    centerLng: query.centerLng || 9.1859,\n    isScheduled: false\n  }\n}];"
+      },
+      "id": "parse-params-001",
+      "name": "Parse Query Parameters",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-112, 64]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE workflow_executions SET status = 'completed', last_executed_at = NOW(), event_count = {{ $json.rowsAffected || 0 }}, n8n_execution_id = '{{ $execution.id }}', cities = ARRAY[{{ $('Parse Query Parameters').first().json.cities.map(c => \"'\" + c + \"'\").join(',') }}]::text[], location = '{{ $('Parse Query Parameters').first().json.cities.join(', ') }}' WHERE id = {{ $('Parse Query Parameters').first().json.executionId }}::integer"
+      },
+      "id": "update-cache-001",
+      "name": "Update Workflow Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1472, 96]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger-001",
+      "name": "Schedule Trigger - Every 4h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-336, -96]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recupera TUTTI gli eventi da InLombardia con paginazione AJAX\nconst params = $('Parse Query Parameters').first().json;\n\nconst dateFromStr = params.dateFrom.includes('T') ? params.dateFrom.split('T')[0] : params.dateFrom;\nconst dateToStr = params.dateTo.includes('T') ? params.dateTo.split('T')[0] : params.dateTo;\n\nconst dateFrom = dateFromStr.split('-').reverse().join('/');\nconst dateTo = dateToStr.split('-').reverse().join('/');\n\nconst initialUrl = `https://www.in-lombardia.it/eventi?from%5Bvalue%5D%5Bdate%5D=${encodeURIComponent(dateFrom)}&to%5Bvalue%5D%5Bdate%5D=${encodeURIComponent(dateTo)}&location=&where=&distance=40&what%5B%5D=all&date_search=period`;\n\nconst initialResponse = await this.helpers.httpRequest({\n  method: 'GET',\n  url: initialUrl,\n  returnFullResponse: true\n});\n\nconst initialHtml = initialResponse.body;\n\nconst viewDomIdMatch = initialHtml.match(/view_dom_id[\"']?:\\s*[\"']([a-f0-9]+)[\"']/);\nif (!viewDomIdMatch) {\n  return [{ json: { data: initialHtml, pagesLoaded: 1 } }];\n}\nconst viewDomId = viewDomIdMatch[1];\n\nlet allHtml = initialHtml;\nlet page = 1;\nlet cardLastPos = 20;\nlet hasMorePages = true;\nconst maxPages = 50;\n\nwhile (hasMorePages && page < maxPages) {\n  const formData = [\n    `page=${page}`,\n    `view_name=events`,\n    `view_display_id=aggregatore_tutti`,\n    `view_dom_id=${viewDomId}`,\n    `pager_element=0`,\n    `card_last_pos=${cardLastPos}`,\n    `card_last_merge_pos=${cardLastPos - 2}`,\n    `from%5Bvalue%5D%5Bdate%5D=${encodeURIComponent(dateFrom)}`,\n    `to%5Bvalue%5D%5Bdate%5D=${encodeURIComponent(dateTo)}`,\n    `distance=40`,\n    `what%5B0%5D=all`,\n    `date_search=period`\n  ].join('&');\n  \n  try {\n    const ajaxResponse = await this.helpers.httpRequest({\n      method: 'POST',\n      url: 'https://www.in-lombardia.it/it/views/ajax',\n      headers: {\n        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',\n        'X-Requested-With': 'XMLHttpRequest'\n      },\n      body: formData\n    });\n    \n    const insertCommand = ajaxResponse.find(cmd => \n      cmd.command === 'insert' || \n      cmd.command === 'views_infinite_scroll_insert_view' ||\n      cmd.command === 'views_infinite_scroll_content_selector'\n    );\n    \n    if (insertCommand && insertCommand.data) {\n      const pageHtml = insertCommand.data;\n      const eventCount = (pageHtml.match(/<article/g) || []).length;\n      \n      if (eventCount === 0) {\n        hasMorePages = false;\n      } else {\n        allHtml += pageHtml;\n        page++;\n        cardLastPos += 10;\n      }\n    } else {\n      hasMorePages = false;\n    }\n  } catch (error) {\n    hasMorePages = false;\n  }\n}\n\nreturn [{ json: { data: allHtml, pagesLoaded: page } }];"
+      },
+      "id": "7fe29ef6-04ed-44b0-b527-b63dff62cdab",
+      "name": "Code - Fetch All InLombardia Events (Paginated)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 368]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse HTML di InLombardia per estrarre eventi\nconst html = $input.first().json.data;\n\nconst events = [];\n\nconst cardMatches = html.match(/<article[^>]*class=\"[^\"]*c-card[^\"]*\"[^>]*>([\\s\\S]*?)<\\/article>/g);\n\nif (cardMatches) {\n  cardMatches.forEach(card => {\n    const titleMatch = card.match(/<h4[^>]*class=\"c-card__title\"[^>]*>([^<]+)<\\/h4>/);\n    const title = titleMatch ? titleMatch[1].trim() : null;\n    \n    const venueMatch = card.match(/<h5[^>]*class=\"c-card__location\"[^>]*>([^<]+)<\\/h5>/);\n    const venue = venueMatch ? venueMatch[1].trim() : null;\n    \n    const addressMatch = card.match(/<h6[^>]*class=\"c-card__city\"[^>]*>([^<]+)<\\/h6>/);\n    const address = addressMatch ? addressMatch[1].trim() : null;\n    \n    const dateMatch = card.match(/<div[^>]*class=\"c-card__date\"[^>]*>(\\d{2}\\/\\d{2}\\/\\d{4}(?:\\s*-\\s*\\d{2}\\/\\d{2}\\/\\d{4})?)<\\/div>/);\n    const dateStr = dateMatch ? dateMatch[1].trim() : null;\n    \n    const categoryMatch = card.match(/<div[^>]*class=\"c-card__labels\"[^>]*>[\\s\\S]*?<span[^>]*>([^<]+)<\\/span>/);\n    const category = categoryMatch ? categoryMatch[1].trim() : null;\n    \n    const urlMatch = card.match(/<a[^>]+href=\"([^\"]+)\"/);\n    const url = urlMatch ? (urlMatch[1].startsWith('http') ? urlMatch[1] : 'https://www.in-lombardia.it' + urlMatch[1]) : null;\n    \n    const imgMatch = card.match(/<img[^>]+src=\"([^\"]+)\"/);\n    let image = imgMatch ? imgMatch[1] : null;\n    if (image && !image.startsWith('http') && image !== 'blank.gif') {\n      image = 'https://www.in-lombardia.it' + (image.startsWith('/') ? image : '/' + image);\n    } else if (image === 'blank.gif' || image?.includes('blank.gif')) {\n      image = null;\n    }\n    \n    if (title && dateStr) {\n      events.push({\n        title,\n        venue,\n        address,\n        date: dateStr,\n        category,\n        url,\n        image\n      });\n    }\n  });\n}\n\nreturn events.map(event => ({ json: event }));"
+      },
+      "id": "f41332fc-cc39-46f1-a772-4f858e2aecd5",
+      "name": "Code - Parse InLombardia HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [432, 368]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst params = $('Parse Query Parameters').first().json;\n\nconst dateFrom = new Date(params.dateFrom);\ndateFrom.setHours(0, 0, 0, 0);\n\nconst dateTo = new Date(params.dateTo);\ndateTo.setHours(23, 59, 59, 999);\n\nconst results = [];\n\nfunction parseItalianDate(dateStr) {\n  const parts = dateStr.split('-')[0].trim().split('/');\n  if (parts.length === 3) {\n    const date = new Date(parts[2], parts[1] - 1, parts[0]);\n    date.setHours(0, 0, 0, 0);\n    return date;\n  }\n  return null;\n}\n\nfunction parseEndDate(dateStr) {\n  if (dateStr.includes('-')) {\n    const endPart = dateStr.split('-')[1].trim();\n    const parts = endPart.split('/');\n    if (parts.length === 3) {\n      const date = new Date(parts[2], parts[1] - 1, parts[0]);\n      date.setHours(23, 59, 59, 999);\n      return date;\n    }\n  }\n  return null;\n}\n\nfor (const item of items) {\n  const data = item.json;\n  \n  const eventStartDate = parseItalianDate(data.date);\n  let eventEndDate = parseEndDate(data.date);\n  \n  if (!eventStartDate) continue;\n  \n  if (!eventEndDate) {\n    eventEndDate = new Date(eventStartDate);\n    eventEndDate.setHours(23, 59, 59, 999);\n  }\n  \n  const isActiveInPeriod = eventStartDate <= dateTo && eventEndDate >= dateFrom;\n  if (!isActiveInPeriod) continue;\n  \n  let locationCity = null;\n  if (data.address) {\n    const cityMatch = data.address.match(/([A-Z][a-zà-ù\\\\s]+)(?:\\\\s*\\\\([A-Z]{2}\\\\))?/);\n    locationCity = cityMatch ? cityMatch[1].trim() : data.address.split(',')[0].trim();\n  }\n  \n  if (!locationCity && data.venue) {\n    locationCity = data.venue.split(',')[0].trim();\n  }\n  \n  results.push({\n    json: {\n      source: 'in-lombardia',\n      source_id: data.url ? data.url.split('/').pop() : String(Math.random()),\n      title: data.title || 'Evento',\n      description: '',\n      date_start: eventStartDate.toISOString(),\n      date_end: eventEndDate.toISOString(),\n      location_name: locationCity || data.venue || 'Lombardia',\n      address: data.address,\n      latitude: null,\n      longitude: null,\n      category: data.category || 'Evento',\n      source_url: data.url || 'https://www.in-lombardia.it',\n      image_url: data.image\n    }\n  });\n}\n\nreturn results;"
+      },
+      "id": "a5b16fad-fcd8-44aa-8750-5dd75abdf912",
+      "name": "Code - Transform InLombardia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 368]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "inlombardia-date-check",
+              "leftValue": "={{ $json.date_start }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ]
+        }
+      },
+      "id": "0a575bf0-1946-481f-bfbf-a1c5cb6b9291",
+      "name": "IF - InLombardia Valid Date",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [848, 368]
+    }
+  ],
+  "connections": {
+    "HTTP Request - SoloSagre": {
+      "main": [[{"node": "Code - Parse SoloSagre HTML", "type": "main", "index": 0}]]
+    },
+    "HTTP Request - OpenData Lombardia": {
+      "main": [[{"node": "Code - Transform OpenData", "type": "main", "index": 0}]]
+    },
+    "Code - Parse SoloSagre HTML": {
+      "main": [[{"node": "Code - Transform SoloSagre", "type": "main", "index": 0}]]
+    },
+    "Code - Transform SoloSagre": {
+      "main": [[{"node": "IF - SoloSagre Valid Date", "type": "main", "index": 0}]]
+    },
+    "IF - SoloSagre Valid Date": {
+      "main": [[{"node": "Merge - All Sources", "type": "main", "index": 0}]]
+    },
+    "Merge - All Sources": {
+      "main": [[{"node": "Insert in DB", "type": "main", "index": 0}]]
+    },
+    "Code - Transform OpenData": {
+      "main": [[{"node": "IF - OpenData Valid Date", "type": "main", "index": 0}]]
+    },
+    "IF - OpenData Valid Date": {
+      "main": [[{"node": "Merge - All Sources", "type": "main", "index": 1}]]
+    },
+    "Webhook Trigger - Scrape Request": {
+      "main": [[{"node": "Parse Query Parameters", "type": "main", "index": 0}]]
+    },
+    "Parse Query Parameters": {
+      "main": [[
+        {"node": "HTTP Request - SoloSagre", "type": "main", "index": 0},
+        {"node": "HTTP Request - OpenData Lombardia", "type": "main", "index": 0},
+        {"node": "Code - Fetch All InLombardia Events (Paginated)", "type": "main", "index": 0}
+      ]]
+    },
+    "Insert in DB": {
+      "main": [[{"node": "Update Workflow Cache", "type": "main", "index": 0}]]
+    },
+    "Schedule Trigger - Every 4h": {
+      "main": [[{"node": "Parse Query Parameters", "type": "main", "index": 0}]]
+    },
+    "Code - Fetch All InLombardia Events (Paginated)": {
+      "main": [[{"node": "Code - Parse InLombardia HTML", "type": "main", "index": 0}]]
+    },
+    "Code - Parse InLombardia HTML": {
+      "main": [[{"node": "Code - Transform InLombardia", "type": "main", "index": 0}]]
+    },
+    "Code - Transform InLombardia": {
+      "main": [[{"node": "IF - InLombardia Valid Date", "type": "main", "index": 0}]]
+    },
+    "IF - InLombardia Valid Date": {
+      "main": [[{"node": "Merge - All Sources", "type": "main", "index": 2}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

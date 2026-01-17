@@ -1,0 +1,57 @@
+services:
+  - type: web
+    name: fuorirotta-n8n
+    runtime: docker
+    repo: https://github.com/n8n-io/n8n.git
+    dockerfilePath: docker/images/n8n/Dockerfile
+    dockerContext: .
+    plan: free
+    autoDeploy: false
+    envVars:
+      # Basic Configuration
+      - key: N8N_PORT
+        value: 5678
+
+      # Database Configuration (Supabase)
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        sync: false
+      - key: DB_POSTGRESDB_PORT
+        value: 5432
+      - key: DB_POSTGRESDB_DATABASE
+        sync: false
+      - key: DB_POSTGRESDB_USER
+        sync: false
+      - key: DB_POSTGRESDB_PASSWORD
+        sync: false
+      - key: DB_POSTGRESDB_SCHEMA
+        value: public
+
+      # Security
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: true
+      - key: N8N_BASIC_AUTH_USER
+        sync: false
+      - key: N8N_BASIC_AUTH_PASSWORD
+        sync: false
+
+      # Webhook Configuration
+      - key: WEBHOOK_URL
+        sync: false  # https://fuorirotta-n8n.onrender.com
+      - key: N8N_EDITOR_BASE_URL
+        sync: false  # https://fuorirotta-n8n.onrender.com
+
+      # Performance
+      - key: EXECUTIONS_PROCESS
+        value: main
+      - key: EXECUTIONS_MODE
+        value: regular
+
+      # Timezone
+      - key: GENERIC_TIMEZONE
+        value: Europe/Rome
+
+      # Encryption key (generate a random string)
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
